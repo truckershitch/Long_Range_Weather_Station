@@ -1,5 +1,6 @@
 /*
 Pipe adapter 16mm to 17mm ID
+Remixed for https://www.thingiverse.com/thing:5990046
 
 Created November 24, 2023
 Modified November 26, 2023

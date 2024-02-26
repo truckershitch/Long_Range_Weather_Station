@@ -1,0 +1,11 @@
+/* Edit this file and rename to settings.h */
+#include <WiFi.h>
+
+IPAddress mqttServer(192, 168, 1, 1);
+const char *ssid = "ssidName";
+const char *passwd = "ssidPassword";
+const char *mqttUser = "mqttUser";
+const char *mqttPass = "mqttPassword";
+const char *mqttSubTopic = "ha/weather/cmd"; // commands sent by Home Assistant via MQTT
+const char *mqttPubTopic = "ha/weather/stat"; // sent to MQTT Server
+const char *mqttIBTopic = "ha/weather/ib"; // Home Assistant Weather Station Input Boolean

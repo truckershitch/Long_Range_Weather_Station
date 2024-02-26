@@ -1,13 +1,16 @@
 /*
 Deck Post Cap
 For mounting Long Range Weather Station
+to 4 x 4 inch deck pole (standard US size)
+Remixed / New Mount for https://www.thingiverse.com/thing:5990046
 
 Created October 16, 2023
 Modified November 23, 2023
 
 Notes 12/13/23:
     - rot_cap_theta set to my deck "South"
-    - easier to calibrate wind direction
+    - used compass app on my phone to find South direction
+    - easier to calibrate
 */
 
 bott_cap_lw = 102.3; // length/width of deck post, bottom l/w of cap

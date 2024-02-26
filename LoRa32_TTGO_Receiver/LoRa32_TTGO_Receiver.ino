@@ -4,6 +4,8 @@ Also see https://github.com/hutscape/hutscape.github.io/tree/master/_tutorials/c
 and https://github.com/hutscape/hutscape.github.io/tree/master/_tutorials/code/lora-duplex-b
 */
 
+// #define START_WIFI_MANAGER // uncomment to tell weather station to start wifi manager (can update firmware)
+
 #include <SPI.h>
 #include <LoRa.h>
 #include <WiFi.h>
@@ -58,16 +60,15 @@ struct Date{
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 IPAddress mqttServer(192, 168, 1, 50);
-const char *ssid = "ssid";
-const char *passwd = "ssidpass";
-const char *mqttUser = "mqttuser";
-const char *mqttPass = "mqttpass";
-const char *mqttSubTopic = "subtopic"; // commands sent by Home Assistant via MQTT
-const char *mqttPubTopic = "pubtopic"; // sent to MQTT Server
+const char *ssid = "collardgreens";
+const char *passwd = "piccoloandochoarefriends";
+const char *mqttUser = "homeassistant";
+const char *mqttPass = "assistthisbitch";
+const char *mqttSubTopic = "ha/outside/weather_station/cmd"; // commands sent by Home Assistant via MQTT
+const char *mqttPubTopic = "ha/outside/weather_station/stat"; // sent to MQTT Server
+const char *mqttIBTopic = "ha/outside/weather_station/ib"; // Home Assistant W.S. Input Boolean
 
 bool pubInLoop = false; // mqtt publish once per radioLoop()
-
-// #define START_WIFI_MANAGER // uncomment to tell weather station to start wifi manager (can update firmware)
 
 #ifdef START_WIFI_MANAGER
 const int timeToSleepDefault = 2;
@@ -277,6 +278,13 @@ bool readJSON(const char *json) {
   if (doc.containsKey("configWiFi")) {
     configWiFi = doc["configWiFi"]; // update configWiFi
   }
+  if (doc.containsKey("haIBCmd")) { // weather station received command
+    if (doc["haIBCmd"] == "off") {
+      // send mqtt to HA - disable the input boolean
+      uint8_t msg[4] = "off";
+      mqttClient.publish(mqttIBTopic, msg, sizeof(msg), true);
+    }
+  }
 
   return true;
 }
@@ -376,11 +384,11 @@ void sendLoRa() {
 
 void radioLoop() {
   int del = 250;
-  int tries = 3;
+  int tries = 10;
   pubInLoop = false;
 
   getNTPTime();
-  for (int i = 0; i < 10; i++) {
+  for (int i = 0; i < tries; i++) {
     sendLoRa();
     delay(del);
     for (int j = 0; j < tries; j++) {
@@ -391,8 +399,8 @@ void radioLoop() {
 }
 
 void loop() {
-  timeToSleep = timeToSleepDefault;
-  configWiFi = configWiFiDefault;
+  // timeToSleep = timeToSleepDefault;
+  // configWiFi = configWiFiDefault;
 
   checkMQTTConnection();
   mqttClient.loop();

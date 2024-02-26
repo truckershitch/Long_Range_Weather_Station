@@ -23,14 +23,8 @@
 //#define HAS_DHT22       //uncomment for DTH22 temperature + humidity sensor
 #define ENABLE_WIFI     //uncomment to enable wifi access (and WiFiManager)
 // #define CONNECT_WIFI   //uncomment to enable wifi debugging (avoid this when ESPNow in use)
-//#define HAS_MQTT        //uncomment to enable MQTT (need to uncomment ENABLE_WIFI also)
 #define HAS_LORA        //uncomment to enable LORAWAN radio
 #define HAS_LDR         //uncomment to enable light dependent resistor
-
-#ifdef HAS_MQTT
-#include <WiFiClient.h>
-#include <PubSubClient.h>
-#endif
 
 #ifdef HAS_LORA
 #include <SPI.h>
@@ -53,11 +47,18 @@ byte destAddr = 0xAA;
 #endif
 
 float humidity = 0;
+float adjustedHumidity = 0;
+float TEMP_CORR = 0;
 float temperature = 0;
 float outsideTemperature = 0;
-float pressure = 0 ;
+float adjustedTemperature = 0;
+float dewpointTemperature = 0;
+float dewpointSpread = 0;
+float heatIndex = 0;
+float pressure = 0;
 float windAngle = 0;
-float windSpeed = 0;
+int windCtr = 1;
+float avgWindSpeed = 0;
 float windSpeedMax = 0;
 long windTimeOut = 0;     //used in loop to sample winsSpeedMax every 2s
 int smooth = 1000;        //acquire smooth*values for each ADC
@@ -183,6 +184,7 @@ String ssid = "";
 String password = "";
 boolean hasWifiCredentials = false;
 boolean configWiFi = false;
+boolean negateHAIBool = false; // add JSON key to turn off HA ConfigWiFi Input Boolean
 boolean hasNtpTime = false;                 //UTC time not acquired from NTP
 int timeZone = -5;   //set to UTC
 const int dst = 3600;
@@ -350,13 +352,9 @@ void display_time(void)
   Serial.print("-");
   Serial.print(day());
   Serial.print(" at ");
-  // Serial.print(hour());
-  Serial.printf("%02d:", hour());
-  // Serial.print(minute());
-  Serial.printf("%02d:", minute());
-  // Serial.println(second());
-  Serial.printf("%02d\n", second());
+  Serial.printf("%02d:%02d:02d\n", hour(), minute(), second());
 }
+
 
 
 void setup() {
@@ -413,6 +411,7 @@ void setup() {
   Serial.println("_________________");
 #endif
 
+if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
   //enable deepsleep for ESP32
   //  esp_sleep_enable_ext1_wakeup(PIR_PIN_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH); //this will be the code to enter deep sleep and wakeup with pin GPIO2 high
   esp_sleep_enable_timer_wakeup(timeToSleep * uS_TO_S_FACTOR);                 //allow timer deepsleep
@@ -574,12 +573,66 @@ void setup() {
     humidity = bme.readHumidity();
     Serial.print(humidity);
     Serial.println(" %");
+
+  // Calculate dewpoint
+    double a = 17.271;
+    double b = 237.7;
+    double tempcalc = (a * temperature) / (b + temperature) + log(humidity * 0.01);
+    dewpointTemperature = (b * tempcalc) / (a - tempcalc);
+    Serial.print("Dewpoint: ");
+    Serial.print(dewpointTemperature);
+    Serial.println("°C; ");
+
+    if (TEMP_CORR != 0) {
+      // With the dewpoint calculated we can correct temp and automatically calculate humidity
+      adjustedTemperature = temperature + TEMP_CORR;
+      if (adjustedTemperature < dewpointTemperature) adjustedTemperature = dewpointTemperature; //compensation, if offset too high
+      //August-Roche-Magnus approximation (http://bmcnoldy.rsmas.miami.edu/Humidity.html)
+      adjustedHumidity = 100 * (exp((a * dewpointTemperature) / (b + dewpointTemperature)) / exp((a * adjustedTemperature) / (b + adjustedTemperature)));
+      if (adjustedHumidity > 100) adjustedHumidity = 100;    // just in case
+      // print on serial monitor
+      Serial.print("Temp adjusted: ");
+      Serial.print(adjustedTemperature);
+      Serial.print("°C; ");
+      Serial.print("Humidity adjusted: ");
+      Serial.print(adjustedHumidity);
+      Serial.print("%; ");
+    }
+    else
+    {
+      adjustedTemperature = temperature;
+      adjustedHumidity = humidity;
+    }
+
+    // Calculate dewpoint spread (difference between actual temp and dewpoint -> the smaller the number: rain or fog
+    dewpointSpread = adjustedTemperature - dewpointTemperature;
+    Serial.print("Dewpoint Spread: ");
+    Serial.print(dewpointSpread);
+    Serial.println("°C; ");
+
+    // Calculate HI (heatindex in °C) --> HI starts working above 26,7 °C
+    if (adjustedTemperature > 26.7) {
+      double c1 = -8.784, c2 = 1.611, c3 = 2.338, c4 = -0.146, c5 = -1.230e-2, c6 = -1.642e-2, c7 = 2.211e-3, c8 = 7.254e-4, c9 = -2.582e-6;
+      double T = adjustedTemperature;
+      double R = adjustedHumidity;
+
+      double A = (( c5 * T) + c2) * T + c1;
+      double B = ((c7 * T) + c4) * T + c3;
+      double C = ((c9 * T) + c8) * T + c6;
+      heatIndex = (C * R + B) * R + A;
+    }
+    else {
+      heatIndex = adjustedTemperature;
+      Serial.println("Not warm enough (less than 26.7 °C) for Heat Index");
+    }
+    Serial.print("Heat Index: ");
+    Serial.print(heatIndex);
+    Serial.println("°C; ");
   }
 #endif
 
 #ifdef HAS_LDR
   readLDR();
-
   Serial.printf("LDR Value: %d\n", ldr);
 #endif
 
@@ -618,7 +671,7 @@ void setup() {
   GetRawWeight();       //HX711 will sleep after weight acquisition
   if (touch3detected)
   {
-    Serial.print ("-=[M3 Touched]=- Calibrating HX711... ");
+    Serial.print ("-=[Touch3 Detected]=- Calibrating HX711... ");
     calib = CurrentRawWeight;
     Serial.println(CurrentRawWeight);
     preferences.putLong("calib", calib);
@@ -706,6 +759,7 @@ void setup() {
   //  touch_pad_read(TOUCH_PAD_NUM1, &output);  //T1 or M1
   //  M1 = float(output);
 
+
   Serial.println("==> end acquisition sensors");
 
   // initialize the RTC
@@ -737,13 +791,13 @@ void setup() {
     Serial.println(WiFi.localIP());
     //init and get the time
     Serial.println("trying to get time 1");
-    configTime(timeZone * 3600, dst, "pool.ntp.org");
+    configTime(timeZone * 3600, dst * 0, "pool.ntp.org");
     printLocalTime();
 
     //init and get the time
     Serial.println("trying to get time 2");   //call it twice to have a well synchronized time on soft reset... Why ? bex=caus eit works...
     delay(2000);
-    configTime(timeZone * 3600, dst, "pool.ntp.org");
+    configTime(timeZone * 3600, dst * 0, "pool.ntp.org");
     printLocalTime();
 
     //disconnect WiFi as it's no longer needed
@@ -834,7 +888,7 @@ void setup() {
     hasRtcTime = true;                  //now ESP32 RTC time is also initialized
   }
 
-  timeOut = 0;
+  timeOut = millis();
   delay(10);                            //to avoid loosing serialPrint...
 
   DBG("==> start Weather Station full GTW1");
@@ -846,10 +900,11 @@ void setup() {
   Serial.println(sensorsGetTime);
 
 #ifdef HAS_ANEMOMETER
-  windSpeed = getAnemometer();
-  windSpeedMax = windSpeed;
+  avgWindSpeed = getAnemometer();
+  windSpeedMax = avgWindSpeed;
   windTimeOut = millis();
 #endif
+// windTimeOut = millis() + 2000;
 
 #ifdef HAS_LORA
   //SPI LoRa pins
@@ -863,7 +918,7 @@ void setup() {
   }
   Serial.println("LoRa Initialized OK!");
 #endif
-}
+} // end setup()
 
 #ifdef HAS_HX711
 void emptyBucket(void)
@@ -903,12 +958,85 @@ void printLocalTime() //check if ntp time is acquired and print it
   Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S"); //https://www.ibm.com/docs/en/workload-automation/9.5.0?topic=troubleshooting-date-time-format-reference-strftime
 }
 
+void loop() {
+#ifdef HAS_ANEMOMETER
+  if (((millis() - windTimeOut) > 4000)) {  //compute windSpeedMax every 4s
+    windTimeOut = millis();
+    float windSpeed = getAnemometer();
+    windCtr++;
+    windSpeedMax = max(windSpeedMax, windSpeed);
+    // if (windSpeed > windSpeedMax) windSpeedMax = windSpeed;
+    avgWindSpeed = (avgWindSpeed * (windCtr - 1) + windSpeed) / windCtr;
+    Serial.print(" average wind speed (km/h): ");
+    Serial.print(avgWindSpeed);
+    Serial.print(" max speed : ");
+    Serial.println(windSpeedMax);
+  }
+#endif
+
+  if ((((millis() - telnetTimeOut) > 3000)) && hasWifiCredentials) { //debug with telnet (Termius on Android port 23)
+    telnetTimeOut = millis();
+    if (touch3detected)
+      {
+        TelnetStream.println("M3 was touched ==> sensors calibration");
+        Serial.println("M3 was touched ==> sensors calibration");
+      }
+#ifdef HAS_HX711
+    TelnetStream.print("rain weight: ");
+    TelnetStream.print(rainWeight);
+    TelnetStream.println(" g");
+#endif
+#ifdef HAS_ANEMOMETER
+    TelnetStream.print(" average wind speed (km/h): ");
+    TelnetStream.print(avgWindSpeed);
+    TelnetStream.print(" max speed : ");
+    TelnetStream.println(windSpeedMax);
+#endif
+#ifdef HAS_AS5600
+    TelnetStream.print("wind direction: ");
+    TelnetStream.print(windAngle);
+    TelnetStream.print("   now: ");
+    TelnetStream.println( getWindAngle());
+#endif
+#ifdef HAS_BME280
+    TelnetStream.print("temperature = ");
+    TelnetStream.print(temperature);
+
+    TelnetStream.print(" °C   pressure = ");
+    TelnetStream.print( pressure);
+    TelnetStream.print(" hPa   humidity = ");
+    TelnetStream.print(humidity);
+    TelnetStream.println(" %");
+#endif
+#ifdef HAS_DS18B20
+    TelnetStream.print("outside temperature = ");
+    TelnetStream.print(outsideTemperature);
+    TelnetStream.println(" °C");
+#endif
+#ifdef HAS_LDR
+    TelnetStream.print("LDR value: ");
+    TelnetStream.println(ldr);
+#endif
+    TelnetStream.print("Vin = ");
+    TelnetStream.print(Vin);
+    TelnetStream.println( "V");
+  }
+
+  if (millis() > sendStateTimeOut) {
+#if defined HAS_LORA
+    radioLoop();
+#endif
+    Serial.println ("Going to sleep");
+    gotoSleep();
+  }
+}
+
 #ifdef HAS_AS5600
 float getWindAngle(void) {
   float angleValue = as5600.rawAngle() * AS5600_RAW_TO_DEGREES;
   if (touch3detected) //calibrate sensors
   {
-    Serial.println ("-=[M3 Touched]=- Calibrating Wind Direction");
+    Serial.println ("-=[Touch3 Detected]=- Calibrating Wind Direction");
     calibAngle = angleValue;
     preferences.putFloat("calibAngle", calibAngle);
   }
@@ -922,7 +1050,6 @@ float getWindAngle(void) {
   return angleValue;
 }
 #endif
-
 
 #ifdef HAS_ANEMOMETER
 float getAnemometer(void) {
@@ -1058,57 +1185,7 @@ void gotoSleep() {
 }
 
 // TH mods start here
-#ifdef HAS_MQTT
-WiFiClient espClient;
-PubSubClient mqttclient(espClient);
-
-IpAddress mqttServer (192, 168, 1, 50);
-const char *mqttUser = "user";
-const char *mqttPass = "pass";
-const char *mqttSubTopic = "subtopic";
-const char *mqttPubTopic = "pubtopic";
-
-void mqttCallback(char* topic, byte* message, unsigned int length) {
-  Serial.print("Message arrived on topic: ");
-  Serial.print(topic);
-  Serial.print(". Message: ");
-  String messageTemp;
-
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)message[i]);
-    messageTemp += (char)message[i];
-  }
-  Serial.println();
-
-  // If a message is received on the topic esp32/output, you check if the message is either "on" or "off".
-  // Changes the output state according to the message
-  if (String(topic) == mqttSubTopic) {
-    Serial.println(messageTemp);
-    readJSON(messageTemp.c_str());
-  }
-}
-
-void reconnect(void) {
-  // Loop until we're reconnected
-  while (!mqttclient.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    // Attempt to connect
-    if (mqttclient.connect("SuperWeatherClient", mqttUser, mqttPass)) {
-      Serial.println("connected");
-      // Subscribe
-      mqttclient.subscribe(mqttSubTopic);
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(mqttclient.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
-    }
-  }
-}
-#endif
-
-#if defined HAS_MQTT || defined HAS_LORA
+#ifdef HAS_LORA
 bool readJSON(char *json) {
   DynamicJsonDocument doc(256);
   DeserializationError error = deserializeJson(doc, json, 256);
@@ -1131,33 +1208,56 @@ bool readJSON(char *json) {
     hasReceivedTime = true;
   }
   if (doc.containsKey("configWiFi")) {
-    configWiFi = doc["configWiFi"];
-    preferences.putBool("configWiFi", configWiFi);
+    bool configWiFiCmd = doc["configWiFi"];
+    if (configWiFi != configWiFiCmd) {
+      preferences.putBool("configWiFi", configWiFiCmd);
+      if (configWiFiCmd) {
+        negateHAIBool = true;
+        Serial.println("Will start WiFiManager and negate HA Input Boolean");
+      }
+    }
     hasReceivedCmd = true;
   }
   if (doc.containsKey("recv")) {
     hasSentData = doc["recv"];
+    negateHAIBool = false;
   }
   return true;
 }
 
-// rounds a number to 2 decimal places
-// example: round(3.14159) -> 3.14
-double round2(double value) {
-   return (int)(value * 100 + 0.5) / 100.0;
+// see https://www.geeksforgeeks.org/rounding-floating-point-number-two-decimal-places-c-c/
+float round2(float var) {
+    // 37.66666 * 100 =3766.66
+    // 3766.66 + .5 =3767.16    for rounding off value
+    // then type cast to int so value is 3767
+    // then divided by 100 so the value converted into 37.67
+    float value = (int)(var * 100 + .5);
+    return (float)value / 100;
 }
 
 int writeJSON(char *json) {
   DynamicJsonDocument doc(256);
 
-  doc["H"] = round2(humidity);
-  doc["T"] = round2(temperature);
-  doc["P"] = round2(pressure);
-  doc["wAng"] = round2(windAngle);
-  doc["wSp"] = round2(windSpeed / 1.609);
-  doc["wSpMax"] = round2(windSpeedMax / 1.609);
-  doc["rain"] = round2(rain);
-  doc["Vin"] = round2(Vin);
+  // doc["H"] = round2(humidity);
+  // doc["T"] = round2(temperature);
+  // doc["HI"] = round2(heatIndex);
+  // doc["P"] = round2(pressure);
+  // doc["wAng"] = round2(windAngle);
+  // doc["avgWSp"] = round2(avgWindSpeed / 1.609);
+  // doc["wSpMax"] = round2(windSpeedMax / 1.609);
+  // doc["rain"] = round2(rain);
+  // doc["Vin"] = round2(Vin);
+  
+  doc["H"] = humidity;
+  doc["T"] = temperature;
+  doc["HI"] = heatIndex;
+  doc["P"] = pressure;
+  doc["wAng"] = windAngle;
+  doc["avgWSp"] = avgWindSpeed / 1.609;
+  doc["wSpMax"] = windSpeedMax / 1.609;
+  doc["rain"] = rain;
+  doc["Vin"] = Vin;
+  if (negateHAIBool) doc["haIBCmd"] = "off";
 #ifdef HAS_LDR
   doc["LDR"] = ldr;
 #endif
@@ -1191,7 +1291,8 @@ void receiveLoRa() {
 
     char *loraJSON = &loraData[0];
     if (readJSON(loraJSON)) {
-      sendStateTimeOut = 15000; //decrease the timeout value
+      sendStateTimeOut = 35000; //decrease the timeout value
+      timeOut = millis();
 
       Serial.println("Received packet ");
       Serial.println(loraJSON);
@@ -1222,6 +1323,7 @@ void receiveLoRa() {
         rtc.setDateTime(&dt);
 
         timeSetInLoop = true;
+        sendLoRa();
       }
       else {
         Serial.println("Already set time once this loop");
@@ -1231,6 +1333,8 @@ void receiveLoRa() {
 }
 
 void sendLoRa(void) {
+  timeOut = millis();
+
   char weatherOutput[256];
   int jsonLen = writeJSON(weatherOutput);
 
@@ -1259,116 +1363,17 @@ void radioLoop() {
       delay(del);
     }
     if (!timeSetInLoop) {
-      for (int j = 0; j < tries; j++) { // try 3 times
+      for (int j = 0; j < tries; j++) {
         receiveLoRa();
         delay(del);
       }
     }
   }
 }
-
-#ifdef HAS_MQTT
-void sendMQTT() {
-  mqttclient.setServer(mqtt_server, 1883);
-  mqttclient.setCallback(callback);
-
-  if (!mqttclient.connected()) {
-    reconnect();
-  }
-  mqttclient.loop();
-
-  const char *mqttPubString = writeJSON();
-
-  // send it
-  Serial.println("Publishing to MQTT Server: ");
-  Serial.println(mqttPubString);
-  mqttclient.publish("ha/weather", mqttPubString);
-
-  delay(100);
-}
-#endif
-#endif //defined HAS_MQTT || HAS_LORA
+#endif // HAS_LORA
 
 #ifdef HAS_LDR
 void readLDR(void) {
   ldr = analogRead(LDR);
 }
 #endif
-
-void loop(void) {
-  const int sleepTimeOut = 45000; // time to keep weather station awake
-
-#ifdef HAS_ANEMOMETER
-  if (((millis() - windTimeOut) > 5000)) {  //compute windSpeedMax every 5s
-    windTimeOut = millis();
-    windSpeed = getAnemometer();
-    windSpeedMax = max(windSpeedMax, windSpeed);
-    Serial.print(" rot speed (km/h): ");
-    Serial.print(windSpeed);
-    Serial.print(" max speed (km/h): ");
-    Serial.println(windSpeedMax);
-    Serial.print(" rot speed (mph): ");
-    Serial.print(windSpeed / 1.609);
-    Serial.print(" max speed (mph): ");
-    Serial.println(windSpeedMax / 1.609);
-  }
-#endif
-
-  if ((((millis() - telnetTimeOut) > 3000)) && hasWifiCredentials) { //debug with telnet (Termius on Android port 23)
-    telnetTimeOut = millis();
-    if (touch3detected) {
-      TelnetStream.println("-=[M3 Touched]=- ==> sensors calibration");
-      Serial.println("-=[M3 Touched]=- ==> sensors calibration");
-    }
-#ifdef HAS_HX711
-    TelnetStream.print("rain weight: ");
-    TelnetStream.print(rainWeight);
-    TelnetStream.println(" g");
-#endif
-#ifdef HAS_ANEMOMETER
-   TelnetStream.print(" wind speed (km/h): ");
-    TelnetStream.print(windSpeed);
-    TelnetStream.print(" max speed (km/h): ");
-    TelnetStream.println(windSpeedMax);
-#endif
-#ifdef HAS_AS5600
-    TelnetStream.print("wind direction: ");
-    TelnetStream.print(windAngle);
-    TelnetStream.print("   now: ");
-    TelnetStream.println( getWindAngle());
-#endif
-#ifdef HAS_BME280
-    TelnetStream.print("temperature = ");
-    TelnetStream.print(temperature);
-
-    TelnetStream.print(" °C   pressure = ");
-    TelnetStream.print( pressure);
-    TelnetStream.print(" hPa   humidity = ");
-    TelnetStream.print(humidity);
-    TelnetStream.println(" %");
-#endif
-#ifdef HAS_DS18B20
-    TelnetStream.print("outside temperature = ");
-    TelnetStream.print(outsideTemperature);
-    TelnetStream.println(" °C");
-#endif
-#ifdef HAS_LDR
-    TelnetStream.print("LDR value: ");
-    TelnetStream.println(ldr);
-#endif
-    TelnetStream.print("Vin = ");
-    TelnetStream.print(Vin);
-    TelnetStream.println( "V");
-  }
-
-  if (millis() > sleepTimeOut) {
-    Serial.println ("===> Been awake too long... sending data then sleeping");
-#if defined HAS_LORA
-    radioLoop();
-#endif
-#ifdef HAS_MQTT
-    sendMQTT();
-#endif
-    gotoSleep();
-  }
-}

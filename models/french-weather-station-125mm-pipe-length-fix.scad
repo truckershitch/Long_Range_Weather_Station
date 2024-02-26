@@ -1,10 +1,11 @@
 /*
 French Weather Station 125mm Pipe Length Fix
+Remixed for https://www.thingiverse.com/thing:5990046
 
 Created December 13, 2023
 Modified December 13, 2023
 
-Needed to increase 150mm high by 15mm
+Needed to increase 150mm high by 15mm so large pipe needent be reprinted
 */
 
 skinny_od = 118.2 + 0.6; // same as funnel fitting OD, just tighter fit

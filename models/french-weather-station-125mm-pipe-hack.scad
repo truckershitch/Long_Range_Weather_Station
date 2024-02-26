@@ -1,6 +1,8 @@
 /*
 Connecting 125mm Pipe Hack
 for Weather Station
+Remixed for https://www.thingiverse.com/thing:5990046
+Metric PVC pipes are hard to find in the USA
 
 Created October 13, 2023
 Modified December 13, 2023
