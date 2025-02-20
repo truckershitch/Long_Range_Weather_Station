@@ -18,7 +18,7 @@
 #define HAS_HX711       //uncomment for weighing rain gauge
 #define HAS_ANEMOMETER  //uncomment for anemometer
 #define HAS_AS5600      //uncomment for Wind Direction sensor
-#define HAS_BME280      //uncomment for temperature + pressure + humidity BME280 sensor
+// #define HAS_BME280      //uncomment for temperature + pressure + humidity BME280 sensor
 //#define HAS_DS18B20     //uncomment for DS18B20 temperature sensor
 //#define HAS_DHT22       //uncomment for DTH22 temperature + humidity sensor
 #define ENABLE_WIFI     //uncomment to enable wifi access (and WiFiManager)
@@ -47,7 +47,7 @@ byte destAddr = 0xAA;
 #endif
 
 float humidity = 0;
-float adjustedHumidity = 0;
+double adjustedHumidity = 0;
 float TEMP_CORR = 0;
 float temperature = 0;
 float outsideTemperature = 0;
@@ -60,6 +60,7 @@ float windAngle = 0;
 int windCtr = 1;
 float avgWindSpeed = 0;
 float windSpeedMax = 0;
+String windSpStr = "";
 long windTimeOut = 0;     //used in loop to sample winsSpeedMax every 2s
 int smooth = 1000;        //acquire smooth*values for each ADC
 float Vin = 0.;           //input Voltage (solar panel voltage)
@@ -109,7 +110,8 @@ float weightSmoothArray [FILTER_SAMPLES];   // array for holding raw sensor valu
 //anemometer
 #define HALL_OUT_PIN 4
 int tops = 0;       //nb tops when anemometer rotates
-long hallTimeout;   //to debounce
+long hallTimeout;   // debounce counter
+int hallDebounce = 85; // debounce amount
 int anemometerMeasuringTime;
 
 //WindDirection
@@ -142,7 +144,7 @@ Adafruit_BME280 bme; // I2C
 
 long timeOut = 0;
 long telnetTimeOut;
-int sendStateTimeOut = 80000;
+int sendStateTimeOut = 30000;
 int counter;
 // int forceSleep = 0;
 boolean hasReceivedCmd = false;
@@ -267,7 +269,7 @@ int ldr = 0;
 #ifdef HAS_ANEMOMETER
 void IRAM_ATTR hall_ISR()    //hall sensor interrupt routine
 {
-  if ((millis() - hallTimeout) > 10)
+  if ((millis() - hallTimeout) > hallDebounce)
   {
     hallTimeout = millis();
     tops++;
@@ -902,6 +904,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
 #ifdef HAS_ANEMOMETER
   avgWindSpeed = getAnemometer();
   windSpeedMax = avgWindSpeed;
+  windSpStr = String(avgWindSpeed / 1.609, 3);
   windTimeOut = millis();
 #endif
 // windTimeOut = millis() + 2000;
@@ -924,16 +927,42 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
 void emptyBucket(void)
 {
 
+  // // Initialize the configuration structure of the LEDC timer
+  // ledc_timer_config_t ledc_timer = {
+  //   .speed_mode = LEDC_LOW_SPEED_MODE,    // Low-speed mode
+  //   .duty_resolution = LEDC_TIMER_16_BIT, // 16-bit resolution
+  //   .timer_num = LEDC_TIMER_0,            // Timer number
+  //   .freq_hz = 1000,                      // Frequency of the PWM signal, for example, 1000 Hz
+  //   .clk_cfg = LEDC_AUTO_CLK              // Automatic clock source selection
+  // };
+  // // Initialize the configuration structure of the LEDC channel
+  // ledc_channel_config_t ledc_channel = {
+  //   .gpio_num   = LED_PIN,
+  //   .speed_mode = LEDC_LOW_SPEED_MODE,
+  //   .channel    = LEDC_CHANNEL_1,
+  //   .timer_sel  = LEDC_TIMER_0,
+  //   .duty       = 0,  // Initial duty cycle is 0
+  //   .hpoint     = 0
+  // };
+  // // Initialize the LEDC timer
+  // ledc_timer_config(&ledc_timer);
+  // // Initialize the LEDC channel
+  // ledc_channel_config(&ledc_channel);
+
+
+
   //servo to empty the bucket
-  ledcSetup(1, 50, TIMER_WIDTH); // channel 1, 50 Hz, 16-bit width
-  ledcAttachPin(SERVO_PIN, 1);   // SERVO_PIN assigned to channel 1
+  // ledcSetup(1, 50, TIMER_WIDTH); // channel 1, 50 Hz, 16-bit width
+  // ledcAttachPin(SERVO_PIN, 1);   // SERVO_PIN assigned to channel 1
+  ledcAttachChannel(SERVO_PIN, 50, TIMER_WIDTH, 1); // new for ESP32 3.x
   //move servo
   Serial.println("emptying bucket");
-  ledcWrite(1, COUNT_LOW);
+  ledcWrite(SERVO_PIN, COUNT_LOW);
   delay(2000);
-  ledcWrite(1, COUNT_HIGH);
+  ledcWrite(SERVO_PIN, COUNT_HIGH);
   delay(1000);
-  ledcDetachPin(SERVO_PIN);
+  // ledcDetachPin(SERVO_PIN);
+  ledcDetach(SERVO_PIN); // new for ESP32 3.x
   pinMode(SERVO_PIN, INPUT);
   delay(1000);
   GetRawWeight();                 //recalibrate zero value after emptying the bucket
@@ -959,10 +988,13 @@ void printLocalTime() //check if ntp time is acquired and print it
 }
 
 void loop() {
+  timeOut = millis();
+
 #ifdef HAS_ANEMOMETER
   if (((millis() - windTimeOut) > 4000)) {  //compute windSpeedMax every 4s
     windTimeOut = millis();
     float windSpeed = getAnemometer();
+    windSpStr = windSpStr + "," + String(windSpeed / 1.609, 3);
     windCtr++;
     windSpeedMax = max(windSpeedMax, windSpeed);
     // if (windSpeed > windSpeedMax) windSpeedMax = windSpeed;
@@ -1029,6 +1061,15 @@ void loop() {
     Serial.println ("Going to sleep");
     gotoSleep();
   }
+
+  // if (((millis() - timeOut) > (sendStateTimeOut - 1000)) && (hasRtcTime)) gotoSleep(); //if no RTC time then wait for Time sync message
+
+  // if (millis() > 100000)
+  // {
+  //   Serial.println ("===> wake up too long...");
+  //   gotoSleep();
+  // }
+
 }
 
 #ifdef HAS_AS5600
@@ -1225,36 +1266,28 @@ bool readJSON(char *json) {
   return true;
 }
 
-// see https://www.geeksforgeeks.org/rounding-floating-point-number-two-decimal-places-c-c/
-float round2(float var) {
-    // 37.66666 * 100 =3766.66
-    // 3766.66 + .5 =3767.16    for rounding off value
-    // then type cast to int so value is 3767
-    // then divided by 100 so the value converted into 37.67
-    float value = (int)(var * 100 + .5);
-    return (float)value / 100;
-}
+// // see https://www.geeksforgeeks.org/rounding-floating-point-number-two-decimal-places-c-c/
+// float round2(float var) {
+//     // 37.66666 * 100 =3766.66
+//     // 3766.66 + .5 =3767.16    for rounding off value
+//     // then type cast to int so value is 3767
+//     // then divided by 100 so the value converted into 37.67
+//     float value = (int)(var * 100 + .5);
+//     return (float)value / 100;
+// }
 
 int writeJSON(char *json) {
   DynamicJsonDocument doc(256);
 
-  // doc["H"] = round2(humidity);
-  // doc["T"] = round2(temperature);
-  // doc["HI"] = round2(heatIndex);
-  // doc["P"] = round2(pressure);
-  // doc["wAng"] = round2(windAngle);
-  // doc["avgWSp"] = round2(avgWindSpeed / 1.609);
-  // doc["wSpMax"] = round2(windSpeedMax / 1.609);
-  // doc["rain"] = round2(rain);
-  // doc["Vin"] = round2(Vin);
-  
-  doc["H"] = humidity;
-  doc["T"] = temperature;
+  doc["H"] = adjustedHumidity;
+  doc["T"] = adjustedTemperature;
+  doc["DP"] = dewpointTemperature;
   doc["HI"] = heatIndex;
   doc["P"] = pressure;
   doc["wAng"] = windAngle;
   doc["avgWSp"] = avgWindSpeed / 1.609;
   doc["wSpMax"] = windSpeedMax / 1.609;
+  doc["wSpStr"] = windSpStr;
   doc["rain"] = rain;
   doc["Vin"] = Vin;
   if (negateHAIBool) doc["haIBCmd"] = "off";
@@ -1291,7 +1324,8 @@ void receiveLoRa() {
 
     char *loraJSON = &loraData[0];
     if (readJSON(loraJSON)) {
-      sendStateTimeOut = 35000; //decrease the timeout value
+      // sendStateTimeOut = 35000; //decrease the timeout value
+      sendStateTimeOut = 15000; //decrease the timeout value
       timeOut = millis();
 
       Serial.println("Received packet ");
@@ -1348,6 +1382,9 @@ void sendLoRa(void) {
   LoRa.write(jsonLen);
   LoRa.print(weatherOutput);
   LoRa.endPacket();
+
+  // debug
+  Serial.println("Sent LoRa packet");
 }
 
 void radioLoop() {
@@ -1366,6 +1403,10 @@ void radioLoop() {
       for (int j = 0; j < tries; j++) {
         receiveLoRa();
         delay(del);
+
+        if (timeSetInLoop) {
+          break;
+        }
       }
     }
   }

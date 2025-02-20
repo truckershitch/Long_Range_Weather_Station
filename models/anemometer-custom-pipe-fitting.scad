@@ -3,10 +3,11 @@ Anemometer custom pipe fitting
 Remixed from https://www.thingiverse.com/thing:5997239
 
 Created November 27, 2023
-Modified February 25, 2024
+Modified August 22, 2024
 
 2/14/2024 - reduced cone_h 3.5 -> 2.7
 2/25/2024 - increased bott_pipe_h 25 -> 30
+8/22/2024 - increased bott_pipe_h 30 -> 210
 */
 
 $fs = 0.1;
@@ -15,7 +16,7 @@ wall_t = 1.5;
 
 pipe_id = 20.55;
 pipe_od = pipe_id + wall_t * 2;
-bott_pipe_h = 30;
+bott_pipe_h = 210;
 
 cone1_od1 = pipe_od;
 cone1_od2 = 18.2;

@@ -1,0 +1,11 @@
+{
+  "additionalFiles": "../..",
+  "builtInToolsFolders": "",
+  "compiler.optimization_flags": "-Os",
+  "customBuildProperties": "",
+  "fqbn": "esp32:esp32:lolin32-lite:FlashFreq=80,PartitionScheme=default,CPUFreq=240,UploadSpeed=921600,DebugLevel=none,EraseFlash=none",
+  "hardwareFolders": "/home/syn4pse/.arduino15/packages",
+  "otherLibrariesFolders": "/home/syn4pse/Arduino/libraries",
+  "runtime.ide.version": "10607",
+  "sketchLocation": "/home/syn4pse/src/Long_Range_Weather_Station/ESP32_Rezodo_WeatherStation_GTW1"
+}
