@@ -1,2 +1,3 @@
 .vscode
-LoRa32_TTGO_Receiver/settings.h
+ESP_Long_Range_Weather_Station/long_range_weather_station/build
+Lora32_TTGO_Receiver/settings.h

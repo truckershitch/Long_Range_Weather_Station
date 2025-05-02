@@ -18,7 +18,7 @@
 #define HAS_HX711       //uncomment for weighing rain gauge
 #define HAS_ANEMOMETER  //uncomment for anemometer
 #define HAS_AS5600      //uncomment for Wind Direction sensor
-// #define HAS_BME280      //uncomment for temperature + pressure + humidity BME280 sensor
+#define HAS_BME280      //uncomment for temperature + pressure + humidity BME280 sensor
 //#define HAS_DS18B20     //uncomment for DS18B20 temperature sensor
 //#define HAS_DHT22       //uncomment for DTH22 temperature + humidity sensor
 #define ENABLE_WIFI     //uncomment to enable wifi access (and WiFiManager)
@@ -104,7 +104,7 @@ boolean hasEmptiedBucket = false;
 
 
 #define FILTER_SAMPLES   50              // filterSamples should  be an odd number, no smaller than 3
-#define REJECT_RATIO     25               //points to reject % left and right before averaging
+#define REJECT_RATIO     35               //points to reject % left and right before averaging
 float weightSmoothArray [FILTER_SAMPLES];   // array for holding raw sensor values for sensor1
 
 //anemometer
@@ -147,9 +147,11 @@ long telnetTimeOut;
 int sendStateTimeOut = 30000;
 int counter;
 // int forceSleep = 0;
-boolean hasReceivedCmd = false;
-boolean hasReceivedTime = false;
-boolean hasSentData = false;
+bool hasReceivedCmd = false;
+bool hasReceivedTime = false;
+bool hasSentData = false;
+bool timeToSend = false;
+char loraData[256]; // may not need to be global
 
 enum {idle, waitingTime, sendingSensor, sleeping};        // 0: idle, 1: sendingTime, 2: waitingSensor, 3: sleeping
 int GtwStatus = idle;
@@ -250,7 +252,7 @@ bool shouldSaveConfig = true; // TH Mod - was false
 //callback notifying us of the need to save config
 void saveConfigCallback ()
 {
-  Serial.println("Should save config");
+  Serial.println(F("Should save config"));
   shouldSaveConfig = true;
 }
 #endif
@@ -284,28 +286,28 @@ void print_reset_reason(int reason) //Print last reset reason of ESP32
   switch ( reason)
   {
     case 1 :                                                    //Vbat power on reset
-      Serial.println ("POWERON_RESET");
+      Serial.println (F("POWERON_RESET"));
       resetWake = true;
       hasRtcTime = false;                                       //this is the only reset case where RTC memory persistant variables are wiped
       break;
-    case 3 : Serial.println ("SW_RESET"); break;                //Software reset digital core
-    case 4 : Serial.println ("OWDT_RESET"); break;              //Legacy watch dog reset digital core
+    case 3 : Serial.println (F("SW_RESET")); break;                //Software reset digital core
+    case 4 : Serial.println (F("OWDT_RESET")); break;              //Legacy watch dog reset digital core
     case 5 :                                                    //Deep Sleep reset digital core
-      Serial.println ("DEEPSLEEP_RESET");
+      Serial.println (F("DEEPSLEEP_RESET"));
       print_wakeup_reason();
       break;
-    case 6 : Serial.println ("SDIO_RESET"); break;              //Reset by SLC module, reset digital core
-    case 7 : Serial.println ("TG0WDT_SYS_RESET"); break;        //Timer Group0 Watch dog reset digital core
-    case 8 : Serial.println ("TG1WDT_SYS_RESET"); break;        //Timer Group1 Watch dog reset digital core
-    case 9 : Serial.println ("RTCWDT_SYS_RESET"); break;        //RTC Watch dog Reset digital core
-    case 10 : Serial.println ("INTRUSION_RESET"); break;        //Instrusion tested to reset CPU
-    case 11 : Serial.println ("TGWDT_CPU_RESET"); break;        //Time Group reset CPU
-    case 12 : Serial.println ("SW_CPU_RESET"); break;           //Software reset CPU
-    case 13 : Serial.println ("RTCWDT_CPU_RESET"); break;       //RTC Watch dog Reset CPU
-    case 14 : Serial.println ("EXT_CPU_RESET"); break;          //for APP CPU, reseted by PRO CPU
-    case 15 : Serial.println ("RTCWDT_BROWN_OUT_RESET"); break; //Reset when the vdd voltage is not stable
-    case 16 : Serial.println ("RTCWDT_RTC_RESET"); break;       //RTC Watch dog reset digital core and rtc module
-    default : Serial.println ("NO_MEAN");
+    case 6 : Serial.println (F("SDIO_RESET")); break;              //Reset by SLC module, reset digital core
+    case 7 : Serial.println (F("TG0WDT_SYS_RESET")); break;        //Timer Group0 Watch dog reset digital core
+    case 8 : Serial.println (F("TG1WDT_SYS_RESET")); break;        //Timer Group1 Watch dog reset digital core
+    case 9 : Serial.println (F("RTCWDT_SYS_RESET")); break;        //RTC Watch dog Reset digital core
+    case 10 : Serial.println (F("INTRUSION_RESET")); break;        //Instrusion tested to reset CPU
+    case 11 : Serial.println (F("TGWDT_CPU_RESET")); break;        //Time Group reset CPU
+    case 12 : Serial.println (F("SW_CPU_RESET")); break;           //Software reset CPU
+    case 13 : Serial.println (F("RTCWDT_CPU_RESET")); break;       //RTC Watch dog Reset CPU
+    case 14 : Serial.println (F("EXT_CPU_RESET")); break;          //for APP CPU, reseted by PRO CPU
+    case 15 : Serial.println (F("RTCWDT_BROWN_OUT_RESET")); break; //Reset when the vdd voltage is not stable
+    case 16 : Serial.println (F("RTCWDT_RTC_RESET")); break;       //RTC Watch dog reset digital core and rtc module
+    default : Serial.println (F("NO_MEAN"));
   }
 }
 
@@ -315,15 +317,15 @@ void print_wakeup_reason()  //deepSleep wake up reason
   wakeup_reason = esp_sleep_get_wakeup_cause();
   switch (wakeup_reason)
   {
-    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
-    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
-    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
+    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println(F("Wakeup caused by external signal using RTC_IO")); break;
+    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println(F("Wakeup caused by external signal using RTC_CNTL")); break;
+    case ESP_SLEEP_WAKEUP_TIMER : Serial.println(F("Wakeup caused by timer")); break;
     case ESP_SLEEP_WAKEUP_TOUCHPAD :
-      Serial.println("Wakeup caused by touchpad");
+      Serial.println(F("Wakeup caused by touchpad"));
       touchWake = true;
       print_wakeup_touchpad();
       break;
-    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
+    case ESP_SLEEP_WAKEUP_ULP : Serial.println(F("Wakeup caused by ULP program")); break;
     default : Serial.printf("Wakeup was not caused by deep sleep: %d\n", wakeup_reason); break;
   }
 }
@@ -333,17 +335,17 @@ void print_wakeup_touchpad() {
 
   switch (touchPin)
   {
-    case 0  : Serial.println("Touch detected on GPIO 4"); break;
-    case 1  : Serial.println("Touch detected on GPIO 0"); break;
-    case 2  : Serial.println("Touch detected on GPIO 2"); break;
-    case 3  : Serial.println("Touch detected on GPIO 15"); break;
-    case 4  : Serial.println("Touch detected on GPIO 13"); break;
-    case 5  : Serial.println("Touch detected on GPIO 12"); break;
-    case 6  : Serial.println("Touch detected on GPIO 14"); break;
-    case 7  : Serial.println("Touch detected on GPIO 27"); break;
-    case 8  : Serial.println("T9 detected "); break;  //GPIO32
-    case 9  : Serial.println("T8 detected "); break;  //GPIO33
-    default : Serial.println("Wakeup not by touchpad"); break;
+    case 0  : Serial.println(F("Touch detected on GPIO 4")); break;
+    case 1  : Serial.println(F("Touch detected on GPIO 0")); break;
+    case 2  : Serial.println(F("Touch detected on GPIO 2")); break;
+    case 3  : Serial.println(F("Touch detected on GPIO 15")); break;
+    case 4  : Serial.println(F("Touch detected on GPIO 13")); break;
+    case 5  : Serial.println(F("Touch detected on GPIO 12")); break;
+    case 6  : Serial.println(F("Touch detected on GPIO 14")); break;
+    case 7  : Serial.println(F("Touch detected on GPIO 27")); break;
+    case 8  : Serial.println(F("T9 detected ")); break;  //GPIO32
+    case 9  : Serial.println(F("T8 detected ")); break;  //GPIO33
+    default : Serial.println(F("Wakeup not by touchpad")); break;
   }
 }
 void display_time(void)
@@ -354,7 +356,7 @@ void display_time(void)
   Serial.print("-");
   Serial.print(day());
   Serial.print(" at ");
-  Serial.printf("%02d:%02d:02d\n", hour(), minute(), second());
+  Serial.printf("%02d:%02d:%02d\n", hour(), minute(), second());
 }
 
 
@@ -367,11 +369,11 @@ void setup() {
   sensorsGetTime = millis();
 
   Serial.begin(115200);
-  Serial.println(" ");
-  Serial.println("*****************************************");
+  Serial.println(F(" "));
+  Serial.println(F("*****************************************"));
   Serial.print("CPU0 reset reason: ");
   print_reset_reason(rtc_get_reset_reason(0));
-  Serial.println("*****************************************");
+  Serial.println(F("*****************************************"));
 
   if (resetWake)
   {
@@ -396,10 +398,10 @@ void setup() {
   timeToSleep = preferences.getInt("timeToSleep", 4);
   ssid = preferences.getString("ssid", "");         // Get the ssid  value, if the key does not exist, return a default value of ""
   password = preferences.getString("password", "");
-  configWiFi = preferences.getBool("configWiFi", false);
+  configWiFi = preferences.getBool("configWiFi", false); // Do we start WiFiManager?
 
 #ifdef PREFERENCES_DEBUG
-  Serial.println("_________________");
+  Serial.println(F("_________________"));
   Serial.print("calib0 HX711 : ");
   Serial.println(calibZero);
   Serial.print("calib HX711 : ");
@@ -410,10 +412,10 @@ void setup() {
   Serial.println(configWiFi);
   Serial.print("timeToSleep : ");
   Serial.println(timeToSleep);
-  Serial.println("_________________");
+  Serial.println(F("_________________"));
 #endif
 
-if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
+if (touch3detected) Serial.println(F("-=[Touch3 Detected]=- Calibrating Sensors"));
   //enable deepsleep for ESP32
   //  esp_sleep_enable_ext1_wakeup(PIR_PIN_BITMASK, ESP_EXT1_WAKEUP_ANY_HIGH); //this will be the code to enter deep sleep and wakeup with pin GPIO2 high
   esp_sleep_enable_timer_wakeup(timeToSleep * uS_TO_S_FACTOR);                 //allow timer deepsleep
@@ -457,7 +459,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
       if (configWiFi) preferences.putBool("configWiFi", false); // avoid infinite loop
 
       if (!wifiManager.startConfigPortal("TH WeatherStation")) {
-        Serial.println("failed to connect and hit timeout");
+        Serial.println(F("failed to connect and hit timeout"));
         delay(3000);
         //reset and try again, or maybe put it to deep sleep
         ESP.restart();
@@ -467,7 +469,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
 
     //  //save the custom WifiManager's parameters if needed
     if (shouldSaveConfig) {
-      Serial.println("saving Wifi credentials ");
+      Serial.println(F("saving Wifi credentials "));
       //read updated parameters
       //    strcpy(ascMargin, custom_ascMargin.getValue());
       //    calibWeight = atoi(ascMargin);
@@ -483,7 +485,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
 
 
 #ifdef DEBUG
-  Serial.println(" == > acquiring sensors");
+  Serial.println(F(" == > acquiring sensors"));
 #endif
   digitalWrite(LED_PIN, HIGH);  //led off to save juice
   digitalWrite(PWR_PIN, HIGH);  //all sensors are On
@@ -510,7 +512,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
   //anemometer
 #ifdef HAS_ANEMOMETER
 #ifdef DEBUG
-  Serial.println("anemometer enabled");
+  Serial.println(F("anemometer enabled"));
 #endif
   pinMode(HALL_OUT_PIN, INPUT_PULLUP);
   attachInterrupt(HALL_OUT_PIN, hall_ISR, FALLING);   //will count tops on Anemometer hall Sensor
@@ -546,7 +548,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
   // status = bme.begin(0x76, &Wire2)
   if (!status)
   {
-    Serial.println("Could not find a valid BME280 sensor, check wiring, address, sensor ID!");
+    Serial.println(F("Could not find a valid BME280 sensor, check wiring, address, sensor ID!"));
     Serial.print("SensorID was: 0x"); Serial.println(bme.sensorID(), 16);
     Serial.print("        ID of 0xFF probably means a bad address, a BMP 180 or BMP 085\n");
     Serial.print("   ID of 0x56-0x58 represents a BMP 280,\n");
@@ -556,25 +558,25 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
   }
   else
   {
-    Serial.println("BME280 enabled");
+    Serial.println(F("BME280 enabled"));
     Serial.print("Temperature = ");
     temperature = bme.readTemperature();
     Serial.print(temperature);
-    Serial.println(" °C");
+    Serial.println(F(" °C"));
 
     Serial.print("Pressure = ");
     pressure = bme.readPressure() / 100.0F;
     Serial.print(pressure);
-    Serial.println(" hPa");
+    Serial.println(F(" hPa"));
 
     //    Serial.print("Approx. Altitude = ");
     //    Serial.print(bme.readAltitude(SEALEVELPRESSURE_HPA));
-    //    Serial.println(" m");
+    //    Serial.println(F(" m"));
 
     Serial.print("Humidity = ");
     humidity = bme.readHumidity();
     Serial.print(humidity);
-    Serial.println(" %");
+    Serial.println(F(" %"));
 
   // Calculate dewpoint
     double a = 17.271;
@@ -583,7 +585,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
     dewpointTemperature = (b * tempcalc) / (a - tempcalc);
     Serial.print("Dewpoint: ");
     Serial.print(dewpointTemperature);
-    Serial.println("°C; ");
+    Serial.println(F("°C; "));
 
     if (TEMP_CORR != 0) {
       // With the dewpoint calculated we can correct temp and automatically calculate humidity
@@ -610,7 +612,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
     dewpointSpread = adjustedTemperature - dewpointTemperature;
     Serial.print("Dewpoint Spread: ");
     Serial.print(dewpointSpread);
-    Serial.println("°C; ");
+    Serial.println(F("°C; "));
 
     // Calculate HI (heatindex in °C) --> HI starts working above 26,7 °C
     if (adjustedTemperature > 26.7) {
@@ -625,11 +627,11 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
     }
     else {
       heatIndex = adjustedTemperature;
-      Serial.println("Not warm enough (less than 26.7 °C) for Heat Index");
+      Serial.println(F("Not warm enough (less than 26.7 °C) for Heat Index"));
     }
     Serial.print("Heat Index: ");
     Serial.print(heatIndex);
-    Serial.println("°C; ");
+    Serial.println(F("°C; "));
   }
 #endif
 
@@ -658,7 +660,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
 #ifdef DEBUG
   Serial.print("outside temperature = ");
   Serial.print(outsideTemperature);
-  Serial.println(" °C");
+  Serial.println(F(" °C"));
 #endif
 #endif
 
@@ -694,7 +696,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
   else if (resetWake)
   {
 #ifdef DEBUG
-    Serial.println ("manual reset... ");
+    Serial.println (F("manual reset... "));
 #endif
     emptyBucket();              //we have lost previousRainWeight... must empty the bucket
     rain = 0;
@@ -751,7 +753,7 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
   //
   //
   //  //soil moisture probes initialization
-  //  Serial.println("measuring moisture");
+  //  Serial.println(F("measuring moisture"));
   //  touch_pad_init();
   //  touch_pad_set_voltage(TOUCH_HVOLT_2V7, TOUCH_LVOLT_0V5, TOUCH_HVOLT_ATTEN_1V);
   //  touch_pad_config(TOUCH_PAD_NUM1, 0); //T1
@@ -762,13 +764,13 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
   //  M1 = float(output);
 
 
-  Serial.println("==> end acquisition sensors");
+  Serial.println(F("==> end acquisition sensors"));
 
   // initialize the RTC
   rtc.init();
 
 #if defined (ENABLE_WIFI) && defined (CONNECT_WIFI)
-  Serial.println("==> connect to Wifi");
+  Serial.println(F("==> connect to Wifi"));
   //connect to WiFi
   WiFi.begin(ssid.c_str(), password.c_str());
   long start = millis();
@@ -788,16 +790,16 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
   if (hasWifiCredentials) {
     TelnetStream.begin(); //used to debug over telnet
 
-    Serial.println("Ready");
+    Serial.println(F("Ready"));
     Serial.print("IP address: ");
     Serial.println(WiFi.localIP());
     //init and get the time
-    Serial.println("trying to get time 1");
+    Serial.println(F("trying to get time 1"));
     configTime(timeZone * 3600, dst * 0, "pool.ntp.org");
     printLocalTime();
 
     //init and get the time
-    Serial.println("trying to get time 2");   //call it twice to have a well synchronized time on soft reset... Why ? bex=caus eit works...
+    Serial.println(F("trying to get time 2"));   //call it twice to have a well synchronized time on soft reset... Why ? bex=caus eit works...
     delay(2000);
     configTime(timeZone * 3600, dst * 0, "pool.ntp.org");
     printLocalTime();
@@ -916,47 +918,22 @@ if (touch3detected) Serial.println("-=[Touch3 Detected]=- Calibrating Sensors");
   LoRa.setPins(CS, RST, DIO0);
 
   if (!LoRa.begin(BAND)) {
-    Serial.println("Starting LoRa failed!");
+    Serial.println(F("Starting LoRa failed!"));
     while (1);
   }
-  Serial.println("LoRa Initialized OK!");
+  Serial.println(F("LoRa Initialized OK!"));
 #endif
 } // end setup()
 
 #ifdef HAS_HX711
 void emptyBucket(void)
 {
-
-  // // Initialize the configuration structure of the LEDC timer
-  // ledc_timer_config_t ledc_timer = {
-  //   .speed_mode = LEDC_LOW_SPEED_MODE,    // Low-speed mode
-  //   .duty_resolution = LEDC_TIMER_16_BIT, // 16-bit resolution
-  //   .timer_num = LEDC_TIMER_0,            // Timer number
-  //   .freq_hz = 1000,                      // Frequency of the PWM signal, for example, 1000 Hz
-  //   .clk_cfg = LEDC_AUTO_CLK              // Automatic clock source selection
-  // };
-  // // Initialize the configuration structure of the LEDC channel
-  // ledc_channel_config_t ledc_channel = {
-  //   .gpio_num   = LED_PIN,
-  //   .speed_mode = LEDC_LOW_SPEED_MODE,
-  //   .channel    = LEDC_CHANNEL_1,
-  //   .timer_sel  = LEDC_TIMER_0,
-  //   .duty       = 0,  // Initial duty cycle is 0
-  //   .hpoint     = 0
-  // };
-  // // Initialize the LEDC timer
-  // ledc_timer_config(&ledc_timer);
-  // // Initialize the LEDC channel
-  // ledc_channel_config(&ledc_channel);
-
-
-
   //servo to empty the bucket
   // ledcSetup(1, 50, TIMER_WIDTH); // channel 1, 50 Hz, 16-bit width
   // ledcAttachPin(SERVO_PIN, 1);   // SERVO_PIN assigned to channel 1
   ledcAttachChannel(SERVO_PIN, 50, TIMER_WIDTH, 1); // new for ESP32 3.x
   //move servo
-  Serial.println("emptying bucket");
+  Serial.println(F("emptying bucket"));
   ledcWrite(SERVO_PIN, COUNT_LOW);
   delay(2000);
   ledcWrite(SERVO_PIN, COUNT_HIGH);
@@ -980,7 +957,7 @@ void printLocalTime() //check if ntp time is acquired and print it
   struct tm timeinfo;
   hasNtpTime = true;
   if (!getLocalTime(&timeinfo)) {
-    Serial.println("Failed to obtain time");
+    Serial.println(F("Failed to obtain time"));
     hasNtpTime = false;
     return;
   }
@@ -1011,7 +988,7 @@ void loop() {
     if (touch3detected)
       {
         TelnetStream.println("M3 was touched ==> sensors calibration");
-        Serial.println("M3 was touched ==> sensors calibration");
+        Serial.println(F("M3 was touched ==> sensors calibration"));
       }
 #ifdef HAS_HX711
     TelnetStream.print("rain weight: ");
@@ -1055,21 +1032,16 @@ void loop() {
   }
 
   if (millis() > sendStateTimeOut) {
+    timeToSend = true; // this is the last iteration of loop()
+  }
 #if defined HAS_LORA
-    radioLoop();
+  radioLoop();
 #endif
-    Serial.println ("Going to sleep");
+
+  if (timeToSend) {
+    Serial.println(F("Going to sleep"));
     gotoSleep();
   }
-
-  // if (((millis() - timeOut) > (sendStateTimeOut - 1000)) && (hasRtcTime)) gotoSleep(); //if no RTC time then wait for Time sync message
-
-  // if (millis() > 100000)
-  // {
-  //   Serial.println ("===> wake up too long...");
-  //   gotoSleep();
-  // }
-
 }
 
 #ifdef HAS_AS5600
@@ -1077,7 +1049,7 @@ float getWindAngle(void) {
   float angleValue = as5600.rawAngle() * AS5600_RAW_TO_DEGREES;
   if (touch3detected) //calibrate sensors
   {
-    Serial.println ("-=[Touch3 Detected]=- Calibrating Wind Direction");
+    Serial.println (F("-=[Touch3 Detected]=- Calibrating Wind Direction"));
     calibAngle = angleValue;
     preferences.putFloat("calibAngle", calibAngle);
   }
@@ -1122,7 +1094,7 @@ void GetRawWeight(void) {
 
     if ((millis() - startTime) > 1000)                                          //or time out...
     {
-      Serial.println("weight error");
+      Serial.println(F("weight error"));
     }
     RawWeight = 0;
     // pulse the clock pin 24 times to read the data
@@ -1196,7 +1168,7 @@ float volts(float raw) { //simple linear calibration...
 void gotoSleep() {
   digitalWrite(LED_PIN, HIGH);   // power off sensors
   digitalWrite(PWR_PIN, LOW);    //all sensors are Off
-  Serial.println("Entering DeepSleep");
+  Serial.println(F("Entering DeepSleep"));
   pinMode(DHTPIN, INPUT);
   pinMode(ONE_WIRE_BUS, INPUT);
   pinMode(PIN_CLOCK, INPUT);
@@ -1205,10 +1177,10 @@ void gotoSleep() {
   pinMode(SCL_PIN, INPUT);
 
   if (!hasReceivedCmd) {
-    Serial.println("No Cmd received... ");
+    Serial.println(F("No Cmd received... "));
   }
   if (!hasReceivedTime) {
-    Serial.println("No Time received... ");
+    Serial.println(F("No Time received... "));
     timeToSleep = 2;                        //reset to lowest value
   }
 
@@ -1226,13 +1198,24 @@ void gotoSleep() {
 }
 
 // TH mods start here
+
+// // see https://www.geeksforgeeks.org/rounding-floating-point-number-two-decimal-places-c-c/
+// float round2(float var) {
+//     // 37.66666 * 100 =3766.66
+//     // 3766.66 + .5 =3767.16    for rounding off value
+//     // then type cast to int so value is 3767
+//     // then divided by 100 so the value converted into 37.67
+//     float value = (int)(var * 100 + .5);
+//     return (float)value / 100;
+// }
+
 #ifdef HAS_LORA
 bool readJSON(char *json) {
   DynamicJsonDocument doc(256);
   DeserializationError error = deserializeJson(doc, json, 256);
 
   if (error) {
-    Serial.println("Deserialization error!");
+    Serial.println(F("Deserialization error!"));
     return false;
   }
 
@@ -1254,27 +1237,18 @@ bool readJSON(char *json) {
       preferences.putBool("configWiFi", configWiFiCmd);
       if (configWiFiCmd) {
         negateHAIBool = true;
-        Serial.println("Will start WiFiManager and negate HA Input Boolean");
+        Serial.println(F("Will start WiFiManager and negate HA Input Boolean"));
       }
     }
     hasReceivedCmd = true;
   }
-  if (doc.containsKey("recv")) {
-    hasSentData = doc["recv"];
-    negateHAIBool = false;
+
+  if (doc.containsKey("ACK")) {
+    hasSentData = doc["ACK"] == 1;
   }
+  
   return true;
 }
-
-// // see https://www.geeksforgeeks.org/rounding-floating-point-number-two-decimal-places-c-c/
-// float round2(float var) {
-//     // 37.66666 * 100 =3766.66
-//     // 3766.66 + .5 =3767.16    for rounding off value
-//     // then type cast to int so value is 3767
-//     // then divided by 100 so the value converted into 37.67
-//     float value = (int)(var * 100 + .5);
-//     return (float)value / 100;
-// }
 
 int writeJSON(char *json) {
   DynamicJsonDocument doc(256);
@@ -1290,7 +1264,12 @@ int writeJSON(char *json) {
   doc["wSpStr"] = windSpStr;
   doc["rain"] = rain;
   doc["Vin"] = Vin;
-  if (negateHAIBool) doc["haIBCmd"] = "off";
+  if (negateHAIBool) {
+    doc["haIBCmd"] = "off";
+  }
+  else {
+    doc["haIBCmd"] = "";
+  }
 #ifdef HAS_LDR
   doc["LDR"] = ldr;
 #endif
@@ -1299,80 +1278,13 @@ int writeJSON(char *json) {
   return measureJson(doc); // return json size
 }
 
-void receiveLoRa() {
-  String loraData;
-
-  //try to parse packet
-  int packetSize = LoRa.parsePacket();
-  if (packetSize) {
-    byte recipient = LoRa.read();
-    byte sender = LoRa.read();
-    byte incomingLen = LoRa.read();
-
-    while(LoRa.available()) {
-      loraData += (char)LoRa.read();
-    }
-
-    if (incomingLen != loraData.length()) {
-      Serial.println("Error: Message length does not match length");
-      return;
-    }
-    if (recipient != localAddr) {
-      Serial.println("Error: Recipient address does not match local address");
-      return;
-    }
-
-    char *loraJSON = &loraData[0];
-    if (readJSON(loraJSON)) {
-      // sendStateTimeOut = 35000; //decrease the timeout value
-      sendStateTimeOut = 15000; //decrease the timeout value
-      timeOut = millis();
-
-      Serial.println("Received packet ");
-      Serial.println(loraJSON);
-      int rssi = LoRa.packetRssi();
-      Serial.printf(" with RSSI %d\n", rssi);
-
-      if (!timeSetInLoop) {
-        setTime(timeCmd[3], timeCmd[4], timeCmd[5], timeCmd[2], timeCmd[1], timeCmd[0]);
-        Serial.print("Setting time to ");
-        display_time();
-        Serial.printf("\nNew timeToSleep: %d\n", timeToSleep);
-        Serial.printf("New configWiFi: %d\n", configWiFi);
-
-        struct timeval current_time;
-        gettimeofday(&current_time, NULL);
-        tvsec = current_time.tv_sec;
-        hasRtcTime = true;
-
-        // set DS1302 RTC time
-        Ds1302::DateTime dt;
-        dt.year = timeCmd[0];
-        dt.month = timeCmd[1];
-        dt.day = timeCmd[2];
-        dt.hour = timeCmd[3];
-        dt.minute = timeCmd[4];
-        dt.second = timeCmd[5];
-        if (rtc.isHalted()) DBG("RTC is halted...");
-        rtc.setDateTime(&dt);
-
-        timeSetInLoop = true;
-        sendLoRa();
-      }
-      else {
-        Serial.println("Already set time once this loop");
-      }
-    }
-  }
-}
-
 void sendLoRa(void) {
   timeOut = millis();
 
   char weatherOutput[256];
   int jsonLen = writeJSON(weatherOutput);
 
-  Serial.println("Sending packet: ");
+  Serial.println(F("Sending packet: "));
   Serial.println(weatherOutput);
 
   //Send LoRa packet to receiver
@@ -1383,34 +1295,138 @@ void sendLoRa(void) {
   LoRa.print(weatherOutput);
   LoRa.endPacket();
 
-  // debug
-  Serial.println("Sent LoRa packet");
+  DBG("Sent LoRa packet");
 }
 
-void radioLoop() {
-  int del = 250;
-  int tries = 3;
+bool validateLoRa() {
+  //try to parse packet into JSON and pass along to readJSON()
+  int packetSize = LoRa.parsePacket();
+  if (packetSize) {
+    byte recipient = LoRa.read();
+    byte sender = LoRa.read();
+    byte incomingLen = LoRa.read();
 
-  for (int i = 0; i < 30; i++) {
-    if (hasSentData && timeSetInLoop) {
-      break;
+    loraData[0] = '\0';
+    int loraLen = 0;
+    while(LoRa.available()) {
+      char cToStr[2];
+      cToStr[1] = '\0';
+      cToStr[0] = (char)LoRa.read();
+      strcat(loraData, cToStr);
+      loraLen++;
     }
-    if (!hasSentData) {
-      sendLoRa();
-      delay(del);
+
+    if (incomingLen != loraLen) {
+      Serial.println(F("Error: Message length incorrect or no data"));
+      return false;
     }
+    if (recipient != localAddr) {
+      Serial.println(F("Error: Recipient address incorrect"));
+      return false;
+    }
+    if (sender != destAddr) {
+      Serial.println(F("Error: Sender address incorrect"));
+      return false;
+    }
+
+    char *loraJSON = &loraData[0];
+
+    if (readJSON(loraJSON)) {
+      Serial.println(F("Received packet "));
+      Serial.println(loraJSON);
+      int rssi = LoRa.packetRssi();
+      Serial.printf(" with RSSI %d\n", rssi);
+
+      return true;
+    }
+    else return false;
+  }
+}
+
+void receiveLoRa() {
+  if (validateLoRa()) { // data is valid
+    // sendStateTimeOut = 35000; //decrease the timeout value
+    sendStateTimeOut = 15000; //decrease the timeout value
+    timeOut = millis();
+
     if (!timeSetInLoop) {
-      for (int j = 0; j < tries; j++) {
-        receiveLoRa();
-        delay(del);
+      setTime(timeCmd[3], timeCmd[4], timeCmd[5], timeCmd[2], timeCmd[1], timeCmd[0]);
+      Serial.print("Setting time to ");
+      display_time();
+      Serial.printf("\nNew timeToSleep: %d\n", timeToSleep);
+      Serial.printf("New configWiFi: %d\n", configWiFi);
 
-        if (timeSetInLoop) {
-          break;
-        }
-      }
+      struct timeval current_time;
+      gettimeofday(&current_time, NULL);
+      tvsec = current_time.tv_sec;
+      hasRtcTime = true;
+
+      // set DS1302 RTC time
+      Ds1302::DateTime dt;
+      dt.year = timeCmd[0];
+      dt.month = timeCmd[1];
+      dt.day = timeCmd[2];
+      dt.hour = timeCmd[3];
+      dt.minute = timeCmd[4];
+      dt.second = timeCmd[5];
+      if (rtc.isHalted()) DBG("RTC is halted...");
+      rtc.setDateTime(&dt);
+
+      timeSetInLoop = true;
+      sendLoRa();
+    }
+    else {
+      Serial.println(F("Already set time once this loop"));
     }
   }
 }
+
+void receiveACK() {
+  if (validateLoRa()) { // data is valid
+    if (hasSentData) {
+      Serial.print("[= Send acknowledged at ");
+      Serial.printf("%02d-%02d-%d %02d:%02d:%02d =]\n", timeCmd[0], timeCmd[1], timeCmd[2], timeCmd[3], timeCmd[4], timeCmd[5]);
+    }
+  }
+  else {
+    Serial.println(F("Bad packet received"));
+  }
+}
+
+void radioLoop() {
+  int del = 200;
+  int tries = 5;
+  int ackTries = 15;
+  int loops = 10;
+
+  for (int i = 0; i < loops; i++) {
+    for (int i = 0; i < tries; i++) {
+      if (timeSetInLoop) break;  // time has been set; exit loop
+      
+      receiveLoRa(); // now we can set the time and get configuration info
+      delay(del);
+    }
+
+    if (!hasSentData && timeSetInLoop && timeToSend) {  // is it time to send data and has it been sent?
+      for (int i = 0; i < tries; i++) {
+        if (hasSentData) break; // data has been sent; exit loop
+
+        sendLoRa(); // when base gets packet, ACK goes to 1
+        delay(del);
+      }
+
+      for (int j = 0; j < ackTries; j++) {
+        receiveACK(); // base sends ACK = 1 10x then reverts to 0
+        delay(del);
+
+        if (hasSentData) break; // data has been sent; exit loop
+      }
+
+      if (hasSentData) break; // exit outer for loop
+    }
+  }
+}
+
 #endif // HAS_LORA
 
 #ifdef HAS_LDR
